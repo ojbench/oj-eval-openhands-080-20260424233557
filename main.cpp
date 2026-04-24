@@ -1,30 +1,11 @@
 #include <bits/stdc++.h>
 using namespace std;
 
-/*
-We have n ministers labeled 1..n. Among all pairs, almost all have mutual sightings (edges in the complement graph). Input gives m pairs (x,y) that have NOT seen each other. So we are given graph G on n nodes with edges = m pairs; these edges represent allowed adjacency and also the "friendship" pairs that could form groups.
-
-Constraints: At a banquet, selected ministers sit in a circle with adjacency rules:
-- Two ministers who HAVE seen each other (i.e., not in input pair) cannot be seated adjacent. Equivalently, adjacent pairs in the circle must be from the given m pairs (non-sighting pairs). So the circle must be a cycle in G.
-- To prevent pairwise "mutual help groups", king invites an odd number of ministers (not 1). So the cycle length must be an odd number >=3.
-
-Question: Count ministers who can NEVER be invited in any valid banquet (i.e., those not lying in any odd cycle of G).
-
-Thus the answer is n minus the number of vertices that belong to at least one odd cycle of the given graph G.
-
-Observation: A vertex belongs to some odd cycle iff it lies in a non-bipartite biconnected component (block) of G, or more generally, vertices that are in the odd-cycle vertex set. In undirected graphs, a vertex is in some odd cycle iff it belongs to a block that is non-bipartite (contains an odd cycle). Articulation vertices that connect components can belong to odd cycle if that block is non-bipartite.
-
-Approach:
-- Build G with m edges undirected.
-- Compute biconnected components using Tarjan (stack of edges).
-- For each BCC, test if it has an odd cycle: equivalently, check if the induced subgraph is bipartite. Since BCC can be processed by painting within edges in the component. If any edge connects same color -> not bipartite -> BCC has odd cycle.
-- If a BCC is non-bipartite, then all vertices in this BCC are in some odd cycle (within that BCC). Mark them.
-- Finally count unmarked vertices -> cannot be invited.
-
-Complexities O(n+m).
+/* See README for problem interpretation.
+   We compute biconnected components (BCCs) in the given undirected graph G of m edges.
+   A vertex can be invited iff it lies in some odd cycle, i.e., in a non-bipartite BCC.
+   We'll implement an iterative Tarjan-style DFS to avoid recursion stack overflow.
 */
-
-struct Edge {int u,v;};
 
 int main(){
     ios::sync_with_stdio(false);
@@ -32,86 +13,96 @@ int main(){
 
     int n,m; if(!(cin>>n>>m)) return 0;
     vector<vector<int>> adj(n+1);
-    vector<pair<int,int>> edges; edges.reserve(m);
+    adj.shrink_to_fit();
     for(int i=0;i<m;i++){
         int x,y; cin>>x>>y;
-        if(x==y) continue; // ignore self-loops; though not expected
+        if(x==y) continue;
         adj[x].push_back(y);
         adj[y].push_back(x);
-        edges.emplace_back(min(x,y), max(x,y));
     }
 
-    // Tarjan for BCCs
-    int timer=0; 
-    vector<int> tin(n+1, -1), low(n+1, -1);
-    vector<pair<int,int>> st; st.reserve(m);
+    vector<int> tin(n+1, -1), low(n+1, -1), parent(n+1, -1), itIdx(n+1, 0);
+    vector<pair<int,int>> edgeStack; edgeStack.reserve(m);
     vector<char> inOdd(n+1, 0);
+    int timer = 0;
 
-    function<void(int,int)> dfs = [&](int u, int p){
-        tin[u]=low[u]=++timer;
-        int child=0;
-        for(int v: adj[u]){
-            if(v==p) continue; // but multiple edges? none specified; assume simple
-            if(tin[v]==-1){
-                st.emplace_back(u,v);
-                dfs(v,u);
-                low[u]=min(low[u], low[v]);
-                if(low[v] >= tin[u]){
-                    // pop edges until (u,v) to form a BCC
-                    vector<pair<int,int>> compEdges;
-                    vector<int> compVerts;
-                    unordered_set<int> seen;
-                    while(!st.empty()){
-                        auto e = st.back(); st.pop_back();
-                        compEdges.push_back(e);
-                        if(!seen.count(e.first)){ seen.insert(e.first); compVerts.push_back(e.first);} 
-                        if(!seen.count(e.second)){ seen.insert(e.second); compVerts.push_back(e.second);} 
-                        if(e.first==u && e.second==v){
-                            break;
-                        }
-                    }
-                    // Check bipartiteness within this component using BFS over comp subgraph
-                    // Build adjacency list for comp
-                    unordered_map<int, vector<int>> compAdj;
-                    compAdj.reserve(compVerts.size()*2+1);
-                    for(auto &e: compEdges){
-                        compAdj[e.first].push_back(e.second);
-                        compAdj[e.second].push_back(e.first);
-                    }
-                    unordered_map<int,int> color;
-                    bool bip = true;
-                    for(int s: compVerts){
-                        if(color.find(s)!=color.end()) continue;
-                        queue<int> q; q.push(s); color[s]=0;
-                        while(!q.empty() && bip){
-                            int x=q.front(); q.pop();
-                            auto it = compAdj.find(x);
-                            if(it==compAdj.end()) continue;
-                            for(int y: it->second){
-                                auto itc = color.find(y);
-                                if(itc==color.end()){
-                                    color[y]=color[x]^1;
-                                    q.push(y);
-                                } else if(itc->second==color[x]){
-                                    bip=false; break;
-                                }
-                            }
-                        }
-                        if(!bip) break;
-                    }
-                    if(!bip){
-                        for(int a: compVerts) inOdd[a]=1;
-                    }
+    struct Frame{int u;};
+
+    for(int s=1; s<=n; ++s){
+        if(tin[s]!=-1) continue;
+        // start new DFS at s
+        vector<int> stackNodes; stackNodes.reserve(1024);
+        parent[s] = -1; itIdx[s] = 0; stackNodes.push_back(s);
+        while(!stackNodes.empty()){
+            int u = stackNodes.back();
+            if(tin[u]==-1){
+                tin[u]=low[u]=++timer;
+            }
+            if(itIdx[u] < (int)adj[u].size()){
+                int v = adj[u][ itIdx[u]++ ];
+                if(tin[v]==-1){
+                    edgeStack.emplace_back(u,v);
+                    parent[v]=u; itIdx[v]=0; stackNodes.push_back(v);
+                    continue;
+                } else if(v!=parent[u] && tin[v] < tin[u]){
+                    edgeStack.emplace_back(u,v);
+                    low[u] = min(low[u], tin[v]);
                 }
-            } else if(tin[v] < tin[u]){
-                // back edge
-                st.emplace_back(u,v);
-                low[u]=min(low[u], tin[v]);
+                // loop continues on same u to process next neighbor
+            } else {
+                // finishing u
+                stackNodes.pop_back();
+                int p = parent[u];
+                if(p != -1){
+                    // form BCC if needed
+                    if(low[u] >= tin[p]){
+                        // Extract component edges until (p,u) and check bipartiteness via DSU with parity
+                        struct DSU {
+                            unordered_map<int,int> par, rnk, pr; // pr: parity from node to parent
+                            pair<int,int> findp(int x){
+                                auto it = par.find(x);
+                                if(it==par.end()){
+                                    par[x]=x; rnk[x]=0; pr[x]=0; return {x,0};
+                                }
+                                if(it->second==x) return {x, pr[x]};
+                                auto res = findp(it->second);
+                                par[x]=res.first; pr[x]^=res.second; return {par[x], pr[x]};
+                            }
+                            bool unite_diff(int a, int b){
+                                auto pa = findp(a); auto pb = findp(b);
+                                int ra=pa.first, rb=pb.first, xa=pa.second, xb=pb.second;
+                                if(ra==rb){
+                                    return (xa ^ xb) == 1; // must be different
+                                }
+                                // attach smaller rank under larger
+                                int ra_r = rnk[ra]; int rb_r = rnk[rb];
+                                if(ra_r < rb_r){
+                                    par[ra]=rb; pr[ra]= xa ^ xb ^ 1; // parity from ra to rb
+                                } else if(ra_r > rb_r){
+                                    par[rb]=ra; pr[rb]= xa ^ xb ^ 1; // need to compute from rb to ra => same expression
+                                } else {
+                                    par[rb]=ra; pr[rb]= xa ^ xb ^ 1; rnk[ra]=ra_r+1;
+                                }
+                                return true;
+                            }
+                        } dsu;
+                        bool bip = true;
+                        unordered_set<int> compVerts; compVerts.reserve(16);
+                        while(!edgeStack.empty()){
+                            auto e = edgeStack.back(); edgeStack.pop_back();
+                            compVerts.insert(e.first); compVerts.insert(e.second);
+                            if(bip){ if(!dsu.unite_diff(e.first, e.second)) bip=false; }
+                            if(e.first==p && e.second==u) break;
+                        }
+                        if(!bip){
+                            for(int vtx: compVerts) inOdd[vtx]=1;
+                        }
+                    }
+                    low[p] = min(low[p], low[u]);
+                }
             }
         }
-    };
-
-    for(int i=1;i<=n;i++) if(tin[i]==-1) dfs(i,-1);
+    }
 
     int cannot=0; for(int i=1;i<=n;i++) if(!inOdd[i]) cannot++;
     cout<<cannot<<"\n";
